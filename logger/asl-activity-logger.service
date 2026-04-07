@@ -1,0 +1,13 @@
+[Unit]
+Description=AllStarLink Activity Logger
+After=asterisk.service
+Requires=asterisk.service
+
+[Service]
+ExecStart=/usr/local/bin/asl-activity-logger
+Restart=always
+RestartSec=5
+StandardOutput=null
+
+[Install]
+WantedBy=multi-user.target
