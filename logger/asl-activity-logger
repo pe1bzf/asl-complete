@@ -6,6 +6,7 @@ USER, PASSWD = 'admin', 'CHANGE_ME_SECRET'
 MY_NODE     = 'CHANGE_ME_NODE'
 LOGFILE     = '/var/log/asterisk/rpt-activity.log'
 TOPOFILE    = '/var/log/asterisk/asl-topology.json'
+CURTOPOFILE = '/var/log/asterisk/asl-current-topo.json'
 DEBOUNCE    = 2.0
 DB_REFRESH  = 15 * 60
 
@@ -155,6 +156,15 @@ def save_topology():
             json.dump(raw, f, indent=2)
     except Exception as e:
         log(f'[WARN] topology opslaan mislukt: {e}')
+
+def save_current_topo():
+    """Schrijf de actuele parent_map (huidige sessie) naar een apart bestand."""
+    try:
+        raw = {k: list(v) for k, v in parent_map.items()}
+        with open(CURTOPOFILE, 'w') as f:
+            json.dump(raw, f, indent=2)
+    except Exception as e:
+        log(f'[WARN] current-topo opslaan mislukt: {e}')
 
 # --- Topology runtime ---
 parent_map = {}   # direct_node -> set(sub_nodes)
@@ -321,6 +331,7 @@ while True:
                             set(effective_alinks.keys()),
                             effective_links - set(effective_alinks.keys())
                         )
+                        save_current_topo()
                     continue
 
                 # --- Topology: leer via UNLINK ---
@@ -333,17 +344,26 @@ while True:
                                 node_history[rd] = node_history.get(rd, set()) | gone
                                 save_topology()
                         parent_map.pop(rd, None)
+                        save_current_topo()
                         log(f'[UNLINK]  node={node_label(rd)} losgekoppeld')
 
                     new_direct = direct_set - set(prev_alinks.keys())
                     for nd in new_direct:
-                        subs = set(node_history.get(nd, set()))
+                        new_subs = set()
                         if new_links_set is not None:
                             new_in_links = (new_links_set - prev_links_set) - {nd} - direct_set
-                            subs |= new_in_links
+                            new_subs |= new_in_links
+                        # Verwijder nieuwe sub-nodes uit andere parents (node wisselde van parent)
+                        if new_subs:
+                            for other in list(parent_map.keys()):
+                                if other != nd:
+                                    parent_map[other] -= new_subs
+                        subs = set(node_history.get(nd, set())) | new_subs
                         if subs:
                             parent_map[nd] = subs
                         log(f'[LINK]    node={node_label(nd)} verbonden')
+                    if new_direct:
+                        save_current_topo()
 
                 # --- RPT_LINKS zonder ALINKS-wijziging ---
                 if new_links_set is not None and new_alinks is None:

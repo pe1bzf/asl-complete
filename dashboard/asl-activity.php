@@ -5,7 +5,7 @@
  */
 
 $LOG_FILE    = '/var/log/asterisk/rpt-activity.log';
-$TOPO_FILE   = '/var/log/asterisk/asl-topology.json';
+$TOPO_FILE   = '/var/log/asterisk/asl-current-topo.json';
 $MY_NODE     = '449581';
 $MY_CALL     = 'PE1BZF';
 $ASL_API     = 'https://stats.allstarlink.org/api/stats/' . $MY_NODE;
