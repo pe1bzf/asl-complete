@@ -7,6 +7,7 @@ MY_NODE     = 'CHANGE_ME_NODE'
 LOGFILE     = '/var/log/asterisk/rpt-activity.log'
 TOPOFILE    = '/var/log/asterisk/asl-topology.json'
 CURTOPOFILE = '/var/log/asterisk/asl-current-topo.json'
+EL_DIRFILE  = '/var/log/asterisk/echolink-dir.json'
 DEBOUNCE    = 2.0
 DB_REFRESH  = 15 * 60
 
@@ -42,6 +43,11 @@ def fetch_echolink_db():
         with el_db_lock:
             echolink_db.clear()
             echolink_db.update(db)
+        try:
+            with open(EL_DIRFILE, 'w') as f:
+                json.dump(db, f)
+        except Exception as e:
+            log(f'[WARN] echolink-dir.json schrijven mislukt: {e}')
     except Exception as e:
         log(f'[WARN] EchoLink directory refresh mislukt: {e}')
 

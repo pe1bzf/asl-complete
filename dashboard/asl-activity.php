@@ -6,6 +6,7 @@
 
 $LOG_FILE    = '/var/log/asterisk/rpt-activity.log';
 $TOPO_FILE   = '/var/log/asterisk/asl-current-topo.json';
+$EL_DIR_FILE = '/var/log/asterisk/echolink-dir.json';
 $MY_NODE     = '449581';
 $MY_CALL     = 'PE1BZF';
 $ASL_API     = 'https://stats.allstarlink.org/api/stats/' . $MY_NODE;
@@ -158,15 +159,24 @@ if (isset($_GET['netmap'])) {
         if ($nid !== '' && $cs !== '') $apiCallsigns[$nid] = $cs;
     }
 
-    // Geef het opgeloste label terug: logstate → ASL API → puur ID
-    // Labels met '(?)' worden genegeerd zodat de API-fallback kan werken
-    $resolveLabel = function(string $id) use ($linkLabels, $txLabels, $apiCallsigns): string {
+    // EchoLink directory (geschreven door de Python logger, elke 5 min)
+    $elDir = json_decode(@file_get_contents($EL_DIR_FILE) ?: '{}', true) ?? [];
+
+    // Geef het opgeloste label terug: logstate → ASL API → EchoLink dir → puur ID
+    // Labels met '(?)' worden genegeerd zodat de fallback kan werken
+    $resolveLabel = function(string $id) use ($linkLabels, $txLabels, $apiCallsigns, $elDir): string {
         foreach ([$linkLabels[$id] ?? null, $txLabels[$id] ?? null] as $candidate) {
             if ($candidate !== null && strpos($candidate, '(?)') === false) {
                 return $candidate;
             }
         }
         if (isset($apiCallsigns[$id])) return "$id\n{$apiCallsigns[$id]}";
+        // EchoLink node: 3xxxxxx → strip '3', zoek in directory
+        if (strlen($id) === 7 && $id[0] === '3' && ctype_digit($id)) {
+            $elNum = ltrim(substr($id, 1), '0') ?: '0';
+            $call  = $elDir[$elNum] ?? $elDir[substr($id, 1)] ?? null;
+            if ($call) return "$id\nEL:$call";
+        }
         return $id;
     };
 
