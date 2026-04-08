@@ -136,12 +136,19 @@ if (isset($_GET['netmap'])) {
     }
 
     // Current state from log
-    $state     = parseLogWithState($LOG_FILE);
-    $txKeys    = array_keys($state['txState']);
-    $linkKeys  = array_keys($state['linkState']);
+    $state      = parseLogWithState($LOG_FILE);
+    $txKeys     = array_keys($state['txState']);
+    $linkKeys   = array_keys($state['linkState']);
+    $linkLabels = array_map(fn($n) => $n['label'], $state['linkState']);
+    $txLabels   = array_map(fn($n) => $n['label'], $state['txState']);
 
     // Topology (indirect nodes)
     $topo = json_decode(@file_get_contents($TOPO_FILE), true) ?? [];
+
+    // Geef het opgeloste label terug (EchoLink roepnaam uit logstate, of gewoon het ID)
+    $resolveLabel = function(string $id) use ($linkLabels, $txLabels): string {
+        return $linkLabels[$id] ?? $txLabels[$id] ?? $id;
+    };
 
     // Build nodes and edges
     $nodes = [];
@@ -191,12 +198,13 @@ if (isset($_GET['netmap'])) {
         foreach ($subNodes as $sub) {
             $sub = (string)$sub;
             if ($sub === $id || isset($seen[$sub])) continue;
-            $inTxSub = in_array($sub, $txKeys);
+            $inTxSub  = in_array($sub, $txKeys);
+            $subLabel = $resolveLabel($sub);
             $nodes[] = [
                 'id'    => $sub,
-                'label' => $sub,
+                'label' => $subLabel,
                 'group' => $inTxSub ? 'tx' : 'indirect',
-                'title' => "$sub (via $id)",
+                'title' => "$subLabel (via $id)",
             ];
             $edges[] = ['from' => $sub, 'to' => $id, 'id' => "e_{$sub}_{$id}"];
             $seen[$sub] = true;
@@ -206,8 +214,9 @@ if (isset($_GET['netmap'])) {
     // Add any currently linked nodes not in ASL API
     foreach ($linkKeys as $id) {
         if (isset($seen[$id])) continue;
-        $inTx    = in_array($id, $txKeys);
-        $nodes[] = ['id' => $id, 'label' => $id, 'group' => $inTx ? 'tx' : 'linked', 'title' => $id];
+        $inTx  = in_array($id, $txKeys);
+        $label = $resolveLabel($id);
+        $nodes[] = ['id' => $id, 'label' => $label, 'group' => $inTx ? 'tx' : 'linked', 'title' => $label];
         $edges[] = ['from' => $id, 'to' => $MY_NODE, 'id' => "e_$id"];
         $seen[$id] = true;
     }
