@@ -150,9 +150,24 @@ if (isset($_GET['netmap'])) {
     // Topology (indirect nodes)
     $topo = json_decode(@file_get_contents($TOPO_FILE), true) ?? [];
 
-    // Geef het opgeloste label terug (EchoLink roepnaam uit logstate, of gewoon het ID)
-    $resolveLabel = function(string $id) use ($linkLabels, $txLabels): string {
-        return $linkLabels[$id] ?? $txLabels[$id] ?? $id;
+    // Roepnamen uit ASL API als fallback (gevuld voordat we door linkedNodes lopen)
+    $apiCallsigns = [];
+    foreach ($apiData['stats']['data']['linkedNodes'] ?? [] as $ln) {
+        $nid = (string)($ln['name'] ?? '');
+        $cs  = $ln['callsign'] ?? '';
+        if ($nid !== '' && $cs !== '') $apiCallsigns[$nid] = $cs;
+    }
+
+    // Geef het opgeloste label terug: logstate → ASL API → puur ID
+    // Labels met '(?)' worden genegeerd zodat de API-fallback kan werken
+    $resolveLabel = function(string $id) use ($linkLabels, $txLabels, $apiCallsigns): string {
+        foreach ([$linkLabels[$id] ?? null, $txLabels[$id] ?? null] as $candidate) {
+            if ($candidate !== null && strpos($candidate, '(?)') === false) {
+                return $candidate;
+            }
+        }
+        if (isset($apiCallsigns[$id])) return "$id\n{$apiCallsigns[$id]}";
+        return $id;
     };
 
     // Build nodes and edges
