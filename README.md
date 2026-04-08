@@ -40,11 +40,13 @@ Python 3 daemon die via de **Asterisk AMI** luistert naar `RPT_ALINKS` en `RPT_L
 | `[WARN]` | Waarschuwing |
 
 **Functies:**
-- Haalt callsigns op via `https://allmondb.allstarlink.org/` (cache 15 min)
+- Haalt ASL callsigns op via `https://allmondb.allstarlink.org/` (cache 15 min)
+- Haalt EchoLink roepnamen op via `https://www.echolink.org/logins.jsp` (cache 5 min)
+- EchoLink nodes (`3xxxxxx`) worden automatisch omgezet naar roepnaam, bijv. `3567531 (EL:PE1BZF)`
 - Leert indirecte node-topologie (welke nodes via andere nodes verbonden zijn)
 - Sla topology op in `asl-topology.json` voor gebruik na herstart
 - Debounce van 2 seconden op TX-UIT (voorkomt dubbele log bij snelle keying)
-- Permanente nodes (EchoLink 3xxxxxx, conferentie 1999) worden gefilterd
+- Conferentie node 1999 wordt gefilterd uit sub-node weergave
 
 **Installeren op VPS:**
 ```bash

@@ -1,0 +1,14 @@
+[Unit]
+Description=EchoLink Directory Proxy (ASL3 format compatibility)
+After=network.target
+Before=asterisk.service
+
+[Service]
+ExecStart=/usr/local/bin/echolink-dir-proxy
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,194 @@
+#!/usr/bin/env python3
+"""
+EchoLink directory proxy for ASL3 chan_echolink compatibility.
+New EchoLink server format: 4-byte LE uint32 (decompressed size) + zlib data
+Old chan_echolink format:   raw @@@\n or DDD\n header followed by text
+This proxy intercepts F0 requests and converts the new format to the old one.
+"""
+import socket
+import threading
+import zlib
+import struct
+import sys
+import time
+import datetime
+import logging
+
+logging.basicConfig(level=logging.INFO,
+    format='%(asctime)s echolink-proxy %(levelname)s: %(message)s')
+log = logging.getLogger()
+
+LISTEN_HOST = "127.0.0.1"
+LISTEN_PORT = 5200
+
+REAL_SERVERS = [
+    "nasouth.echolink.org",
+    "naeast.echolink.org",
+    "servers.echolink.org",
+    "backup.echolink.org",
+]
+
+def connect_to_server():
+    for srv in REAL_SERVERS:
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(15)
+            s.connect((srv, 5200))
+            return s, srv
+        except Exception as e:
+            log.debug(f"Cannot connect to {srv}: {e}")
+    return None, None
+
+def recv_all(sock, timeout=60):
+    """Read until connection closes."""
+    buf = b""
+    sock.settimeout(timeout)
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            chunk = sock.recv(65536)
+            if not chunk:
+                break
+            buf += chunk
+        except socket.timeout:
+            break
+    return buf
+
+def handle_login(client_sock, data):
+    """Proxy login packet to real server, return response."""
+    real, srv = connect_to_server()
+    if not real:
+        log.error("No EchoLink servers available for login")
+        return False
+    try:
+        # May need to read rest of login packet if incomplete
+        # Login ends with email\r (the 4th \r)
+        buf = data
+        real.settimeout(10)
+        real.send(buf)
+        resp = b""
+        deadline = time.time() + 10
+        while time.time() < deadline:
+            try:
+                chunk = real.recv(1024)
+                if not chunk:
+                    break
+                resp += chunk
+                if b"OK" in resp or b"INVALID" in resp or b"DENIED" in resp:
+                    break
+            except socket.timeout:
+                break
+        log.info(f"Login via {srv}: {repr(resp[:20])}")
+        log.info(f"Login data from chan_echolink: {repr(data[:200])}")
+        client_sock.send(resp)
+        return b"OK" in resp
+    except Exception as e:
+        log.error(f"Login error: {e}")
+        return False
+    finally:
+        real.close()
+
+def handle_directory(client_sock, request):
+    """Fetch directory from real server, convert new format to old."""
+    real, srv = connect_to_server()
+    if not real:
+        log.error("No EchoLink servers available for directory")
+        return
+    try:
+        real.send(request)
+        log.info(f"Directory request to {srv}: {repr(request)}")
+        
+        buf = recv_all(real, timeout=60)
+        log.info(f"Received {len(buf)} bytes from {srv}")
+        
+        if len(buf) < 5:
+            log.warning("Too little data from server")
+            return
+        
+        # Detect format: new (4-byte LE + zlib) vs old (@@@/DDD)
+        if buf[:3] in (b"@@@", b"DDD"):
+            # Already old format - pass through
+            log.info("Old format detected, passing through")
+            client_sock.send(buf)
+            return
+        
+        # New format: first 4 bytes = uint32 LE decompressed size, then zlib
+        expected_size = struct.unpack("<I", buf[:4])[0]
+        zdata = buf[4:]
+        
+        if not zdata or zdata[0] != 0x78:
+            log.warning(f"Unexpected data format: {buf[:8].hex()}")
+            return
+        
+        log.info(f"New format: {expected_size} bytes expected, {len(zdata)} zlib bytes")
+        
+        try:
+            decompressed = zlib.decompress(zdata)
+            log.info(f"Decompressed {len(decompressed)} bytes (expected {expected_size})")
+            # Decompressed data is already in old @@@/DDD format
+            client_sock.send(decompressed)
+        except Exception as e:
+            log.error(f"Decompression failed: {e}")
+    except Exception as e:
+        log.error(f"Directory error: {e}")
+    finally:
+        real.close()
+
+def handle_client(client_sock, addr):
+    try:
+        client_sock.settimeout(15)
+        # Read initial data to determine connection type
+        data = b""
+        deadline = time.time() + 5
+        while time.time() < deadline and len(data) < 512:
+            try:
+                chunk = client_sock.recv(512)
+                if not chunk:
+                    break
+                data += chunk
+                # Login packet ends with 4th carriage return (callsign\r loc\r email\r)
+                if data.startswith(b"l") and data.count(b"\r") >= 4:
+                    break
+                # Directory request: F<snapshot>\r
+                if data.startswith(b"F") and b"\r" in data:
+                    break
+            except socket.timeout:
+                break
+        
+        if not data:
+            return
+        
+        if data.startswith(b"l"):
+            log.info(f"Login connection from {addr}")
+            handle_login(client_sock, data)
+        elif data.startswith(b"F"):
+            log.info(f"Directory request from {addr}: {repr(data[:20])}")
+            handle_directory(client_sock, data)
+        else:
+            log.warning(f"Unknown connection type from {addr}: {repr(data[:20])}")
+    except Exception as e:
+        log.error(f"Client handler error: {e}")
+    finally:
+        try:
+            client_sock.close()
+        except:
+            pass
+
+def main():
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind((LISTEN_HOST, LISTEN_PORT))
+    srv.listen(10)
+    log.info(f"EchoLink proxy listening on {LISTEN_HOST}:{LISTEN_PORT}")
+    
+    while True:
+        try:
+            client, addr = srv.accept()
+            t = threading.Thread(target=handle_client, args=(client, addr), daemon=True)
+            t.start()
+        except Exception as e:
+            log.error(f"Accept error: {e}")
+            time.sleep(1)
+
+if __name__ == "__main__":
+    main()

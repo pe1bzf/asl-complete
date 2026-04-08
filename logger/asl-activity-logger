@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import socket, time, threading, urllib.request, json, os
+import socket, time, threading, urllib.request, json, os, re
 
 HOST, PORT = '127.0.0.1', 5038
 USER, PASSWD = 'admin', 'make4An1ce-secret'
@@ -11,6 +11,42 @@ DB_REFRESH  = 15 * 60
 # --- Node database ---
 node_db = {}
 db_lock = threading.Lock()
+
+# --- EchoLink directory ---
+echolink_db = {}
+el_db_lock  = threading.Lock()
+EL_REFRESH  = 5 * 60
+
+def fetch_echolink_db():
+    try:
+        req = urllib.request.Request(
+            'https://www.echolink.org/logins.jsp',
+            headers={'User-Agent': 'ASL-Dashboard/1.0'}
+        )
+        with urllib.request.urlopen(req, timeout=15) as r:
+            html = r.read().decode(errors='ignore')
+        rows = re.findall(r'<tr[^>]*>(.*?)</tr>', html, re.DOTALL | re.IGNORECASE)
+        db = {}
+        for row in rows:
+            cells = re.findall(r'<td[^>]*>(.*?)</td>', row, re.DOTALL | re.IGNORECASE)
+            if len(cells) >= 5:
+                call = re.sub(r'<[^>]+>', '', cells[0]).strip()
+                node = re.sub(r'<[^>]+>', '', cells[-1]).strip()
+                if call and node.isdigit():
+                    db[node] = call
+                    stripped = str(int(node))
+                    if stripped != node:
+                        db[stripped] = call
+        with el_db_lock:
+            echolink_db.clear()
+            echolink_db.update(db)
+    except Exception as e:
+        log(f'[WARN] EchoLink directory refresh mislukt: {e}')
+
+def el_refresher():
+    while True:
+        fetch_echolink_db()
+        time.sleep(EL_REFRESH)
 
 def fetch_node_db():
     try:
@@ -37,8 +73,17 @@ def db_refresher():
         time.sleep(DB_REFRESH)
 
 def callsign(node):
+    s = str(node)
+    if s.isdigit() and len(s) == 7 and s.startswith('3'):
+        el_num = s[1:]  # strip leading '3'
+        el_stripped = str(int(el_num))
+        with el_db_lock:
+            call = echolink_db.get(el_num) or echolink_db.get(el_stripped)
+        if call:
+            return f'EL:{call}'
+        return f'EL:{el_stripped}'
     with db_lock:
-        return node_db.get(str(node), '?')
+        return node_db.get(s, '?')
 
 def node_label(node):
     cs = callsign(node)
@@ -87,6 +132,7 @@ def sub_label(subs):
     )
 
 # --- Persistente topology ---
+# node_history: direct_node -> list(sub_nodes)  — opgeslagen als JSON
 node_history = {}   # str -> set(str)
 
 def load_topology():
@@ -113,6 +159,7 @@ def save_topology():
 parent_map = {}   # direct_node -> set(sub_nodes)
 
 def build_initial_parent_map(direct_set, indirect_set):
+    """Vul parent_map op basis van node_history en de huidige indirecte nodes."""
     parent_map.clear()
     for direct, known_subs in node_history.items():
         if direct in direct_set:
@@ -152,6 +199,7 @@ def fire_tx_uit(node, subs):
 
 # --- AMI helpers ---
 def ami_recv_until_blank(s, timeout=5):
+    """Ontvang tot een leeg blok (\r\n\r\n) of timeout."""
     s.settimeout(timeout)
     buf = b''
     while True:
@@ -164,6 +212,7 @@ def ami_recv_until_blank(s, timeout=5):
     return buf.decode(errors='ignore')
 
 def ami_query_rpt_variables(s, node='449581'):
+    """Query rpt show variables via AMI en retourneer (alinks_dict, links_set)."""
     cmd = f'Action: Command\r\nCommand: rpt show variables {node}\r\n\r\n'
     s.sendall(cmd.encode())
     time.sleep(0.5)
@@ -179,6 +228,7 @@ def ami_query_rpt_variables(s, node='449581'):
     alinks = {}
     links_set = set()
     for line in text.splitlines():
+        # Output:    RPT_ALINKS=9,PD0KHNTU,...
         for prefix in ('Output:', '   '):
             line = line.replace(prefix, '').strip()
         if line.startswith('RPT_ALINKS='):
@@ -189,6 +239,7 @@ def ami_query_rpt_variables(s, node='449581'):
 
 # --- Start database thread ---
 threading.Thread(target=db_refresher, daemon=True).start()
+threading.Thread(target=el_refresher,  daemon=True).start()
 load_topology()
 
 # --- Hoofdlus ---
@@ -207,6 +258,7 @@ while True:
         s.recv(1024)
         log('AMI logger gestart (hub node 449581)')
 
+        # --- Initiële state ophalen via rpt show variables ---
         init_alinks, init_links = ami_query_rpt_variables(s, '449581')
         if init_alinks:
             prev_alinks    = init_alinks
@@ -270,6 +322,7 @@ while True:
                         )
                     continue
 
+                # --- Topology: leer via UNLINK ---
                 if new_alinks is not None:
                     removed_direct = set(prev_alinks.keys()) - direct_set
                     for rd in removed_direct:
@@ -291,6 +344,7 @@ while True:
                             parent_map[nd] = subs
                         log(f'[LINK]    node={node_label(nd)} verbonden')
 
+                # --- RPT_LINKS zonder ALINKS-wijziging ---
                 if new_links_set is not None and new_alinks is None:
                     gone_indirect = (prev_links_set - new_links_set) - direct_set
                     if gone_indirect:
@@ -298,7 +352,10 @@ while True:
                             parent_map[nd] -= gone_indirect
                             if not parent_map[nd]:
                                 del parent_map[nd]
+                    new_indirect = (new_links_set - prev_links_set) - direct_set
+                    # Onbekende parent — wordt geleerd bij volgende UNLINK
 
+                # --- TX events ---
                 if new_alinks is not None:
                     for node, status in effective_alinks.items():
                         old = prev_alinks.get(node, 'TU')
