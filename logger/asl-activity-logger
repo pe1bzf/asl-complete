@@ -2,7 +2,8 @@
 import socket, time, threading, urllib.request, json, os, re
 
 HOST, PORT = '127.0.0.1', 5038
-USER, PASSWD = 'admin', 'make4An1ce-secret'
+USER, PASSWD = 'admin', 'CHANGE_ME_SECRET'
+MY_NODE     = 'CHANGE_ME_NODE'
 LOGFILE     = '/var/log/asterisk/rpt-activity.log'
 TOPOFILE    = '/var/log/asterisk/asl-topology.json'
 DEBOUNCE    = 2.0
@@ -211,7 +212,7 @@ def ami_recv_until_blank(s, timeout=5):
             break
     return buf.decode(errors='ignore')
 
-def ami_query_rpt_variables(s, node='449581'):
+def ami_query_rpt_variables(s, node=MY_NODE):
     """Query rpt show variables via AMI en retourneer (alinks_dict, links_set)."""
     cmd = f'Action: Command\r\nCommand: rpt show variables {node}\r\n\r\n'
     s.sendall(cmd.encode())
@@ -256,10 +257,10 @@ while True:
         s.sendall(b'Action: Login\r\nUsername: ' + USER.encode() +
                   b'\r\nSecret: ' + PASSWD.encode() + b'\r\n\r\n')
         s.recv(1024)
-        log('AMI logger gestart (hub node 449581)')
+        log(f'AMI logger gestart (hub node {MY_NODE})')
 
         # --- Initiële state ophalen via rpt show variables ---
-        init_alinks, init_links = ami_query_rpt_variables(s, '449581')
+        init_alinks, init_links = ami_query_rpt_variables(s, MY_NODE)
         if init_alinks:
             prev_alinks    = init_alinks
             prev_links_set = init_links
