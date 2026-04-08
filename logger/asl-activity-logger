@@ -286,6 +286,9 @@ while True:
             known = sum(1 for v in parent_map.values() if real_subs(v))
             log(f'[INFO] initiële staat: {len(direct_set)} directe nodes, '
                 f'{len(indirect_set)} indirect, {known} met bekende sub-nodes')
+            # Schrijf LINK-events zodat PHP-dashboard de al-verbonden nodes kent
+            for nd in sorted(direct_set):
+                log(f'[LINK]    node={node_label(nd)} verbonden')
             initialized = True
         else:
             initialized = False
