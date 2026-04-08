@@ -70,6 +70,11 @@ if (isset($_GET['stream'])) {
                     $changed = true;
                 } elseif ($type === 'UNLINK' && $nodeKey !== '') {
                     unset($linkState[$nodeKey]);
+                    if (isset($txState[$nodeKey])) {
+                        array_unshift($lastTx, ['label' => $nodeLabel, 'started' => $txState[$nodeKey]['ts'], 'ended' => $ts]);
+                        $lastTx = array_slice($lastTx, 0, 5);
+                        unset($txState[$nodeKey]);
+                    }
                     $changed = true;
                 } elseif (in_array($type, ['INFO', 'WARN', 'MSG'])) {
                     $changed = true;
@@ -273,6 +278,11 @@ function parseLogWithState($file) {
             $linkState[$nodeKey] = ['ts' => $ts, 'label' => $nodeLabel];
         } elseif ($type === 'UNLINK' && $nodeKey !== '') {
             unset($linkState[$nodeKey]);
+            // Node kan zijn losgekoppeld terwijl hij nog aan het uitzenden was
+            if (isset($txState[$nodeKey])) {
+                $lastTx[] = ['label' => $nodeLabel, 'started' => $txState[$nodeKey]['ts'], 'ended' => $ts];
+                unset($txState[$nodeKey]);
+            }
         }
 
         $text = trim(preg_replace('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\s+(\[.*?\])?\s*/', '', $line));
