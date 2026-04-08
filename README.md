@@ -39,6 +39,18 @@ Python 3 daemon die via de **Asterisk AMI** luistert naar `RPT_ALINKS` en `RPT_L
 | `[INFO]` | Informatiemelding |
 | `[WARN]` | Waarschuwing |
 
+**Logformaat:**
+```
+2026-04-07 08:52:23 [TX-AAN]  node=449582 (PE1BZF) begint uitzenden
+2026-04-07 08:52:27 [TX-UIT]  node=449582 (PE1BZF) stopt uitzenden
+2026-04-07 08:22:40 [LINK]    node=69560 (PA5WIL) verbonden
+2026-04-07 09:00:00 [UNLINK]  node=69560 (PA5WIL) losgekoppeld
+2026-04-07 10:00:00 [TX-AAN]  node=3567531 (EL:PE1BZF) begint uitzenden
+2026-04-07 10:00:05 [TX-UIT]  node=3567531 (EL:PE1BZF) stopt uitzenden
+```
+
+EchoLink nodes verschijnen als `3xxxxxx` in ASL. De logger vertaalt deze automatisch naar roepnamen via de EchoLink online directory.
+
 **Functies:**
 - Haalt ASL callsigns op via `https://allmondb.allstarlink.org/` (cache 15 min)
 - Haalt EchoLink roepnamen op via `https://www.echolink.org/logins.jsp` (cache 5 min)
@@ -67,26 +79,37 @@ systemctl enable --now asl-activity-logger
 
 Single-file PHP dashboard met real-time updates via **Server-Sent Events (SSE)**.
 
-**Installeren op VPS:**
+**Vereisten:**
+- PHP 7.4 of hoger (getest op PHP 8.x)
+- Apache of nginx met PHP
+- Logbestand: `/var/log/asterisk/rpt-activity.log` (gegenereerd door activity logger)
+
+**Installeren:**
 ```bash
 mkdir -p /var/www/html/asl
 cp dashboard/asl-activity.php /var/www/html/asl/index.php
 chown www-data:www-data /var/www/html/asl/index.php
 ```
 
-**Bereikbaar op:** `http://nxdn-almere.nl/asl/`
+Open in browser: `http://jouw-server/asl/`
 
-**Werking:**
-- Leest `/var/log/asterisk/rpt-activity.log` via tail-f methode (100ms polling)
-- SSE pusht updates naar browser binnen ~100ms na log-wijziging
-- Haalt netwerktopologie op via `https://stats.allstarlink.org/api/stats/449581` (cache 5 min)
-- Fallback naar 2s polling als SSE niet beschikbaar is
+**Nginx — SSE buffering uitschakelen:**
+```nginx
+location /asl/ {
+    proxy_buffering off;
+    proxy_cache off;
+}
+```
 
-**Panelen:**
-1. **Nu aan het uitzenden** — live TX met laatste sessies
-2. **Verbonden nodes** — alle gelinkte nodes met tijdstip
-3. **Netwerk** — interactieve vis.js graph, kleurt live mee via SSE
-4. **Recente activiteit** — laatste 100 logregels, kleurgecodeerd
+**Features:**
+- Real-time updates via SSE — maximaal ~100ms vertraging na log-wijziging
+- **Nu aan het uitzenden** — live TX met begintijd en pulserende indicator
+- **Laatste sessies** — 5 meest recente TX-sessies met begin- en eindtijd
+- **Verbonden nodes** — alle gelinkte nodes met tijdstip
+- **Netwerk** — interactieve vis.js graph, kleurt live mee
+- **EchoLink roepnamen** — EchoLink inbellers als `EL:PE1BZF` i.p.v. nodenummer
+- **Recente activiteit** — laatste 100 logregels, kleurgecodeerd
+- Automatische herverbinding; fallback naar 2s polling bij ontbrekende SSE
 
 **Node kleuren in netwerk:**
 | Kleur | Betekenis |
@@ -95,6 +118,19 @@ chown www-data:www-data /var/www/html/asl/index.php
 | Groen | Momenteel aan het uitzenden |
 | Blauw | Verbonden |
 | Grijs | Indirect verbonden of bekend maar niet actief |
+
+**Technische werking:**
+1. PHP leest het volledige logbestand bij initieel laden en bepaalt huidige staat
+2. Daarna opent PHP het bestand op de laatste positie en leest elke 100ms nieuwe regels
+3. State wordt incrementeel bijgehouden in geheugen
+4. Bij wijziging → direct push naar browser via SSE
+
+**Aanpassen aan andere node:**
+```php
+$LOG_FILE = '/var/log/asterisk/rpt-activity.log';
+$MY_NODE  = '449581';
+$MY_CALL  = 'PE1BZF';
+```
 
 ---
 
