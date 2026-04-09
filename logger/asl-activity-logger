@@ -187,20 +187,14 @@ def build_initial_parent_map(direct_set, indirect_set):
 # --- TX logging helpers ---
 def log_tx_aan(node, subs):
     display = real_subs(subs)
-    if len(display) == 1:
-        sub = next(iter(display))
-        log(f'[TX-AAN]  node={node_label(sub)} via {node_label(node)} begint uitzenden')
-    elif display:
+    if display:
         log(f'[TX-AAN]  node={node_label(node)} begint uitzenden [via: {sub_label(display)}]')
     else:
         log(f'[TX-AAN]  node={node_label(node)} begint uitzenden')
 
 def log_tx_uit(node, subs):
     display = real_subs(subs)
-    if len(display) == 1:
-        sub = next(iter(display))
-        log(f'[TX-UIT]  node={node_label(sub)} via {node_label(node)} stopt uitzenden')
-    elif display:
+    if display:
         log(f'[TX-UIT]  node={node_label(node)} stopt uitzenden [via: {sub_label(display)}]')
     else:
         log(f'[TX-UIT]  node={node_label(node)} stopt uitzenden')
