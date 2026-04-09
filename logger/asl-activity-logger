@@ -2,8 +2,8 @@
 import socket, time, threading, urllib.request, json, os, re
 
 HOST, PORT = '127.0.0.1', 5038
-USER, PASSWD = 'admin', 'make4An1ce-secret'
-MY_NODE     = '449581'
+USER, PASSWD = 'admin', 'CHANGE_ME_SECRET'
+MY_NODE     = 'CHANGE_ME_NODE'
 LOGFILE     = '/var/log/asterisk/rpt-activity.log'
 TOPOFILE    = '/var/log/asterisk/asl-topology.json'
 CURTOPOFILE = '/var/log/asterisk/asl-current-topo.json'

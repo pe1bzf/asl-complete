@@ -7,8 +7,8 @@
 $LOG_FILE    = '/var/log/asterisk/rpt-activity.log';
 $TOPO_FILE   = '/var/log/asterisk/asl-current-topo.json';
 $EL_DIR_FILE = '/var/log/asterisk/echolink-dir.json';
-$MY_NODE     = '449581';
-$MY_CALL     = 'PE1BZF';
+$MY_NODE     = 'CHANGE_ME_NODE';
+$MY_CALL     = 'N0CALL';
 $ASL_API     = 'https://stats.allstarlink.org/api/stats/' . $MY_NODE;
 $CACHE_FILE  = '/tmp/asl_api_cache.json';
 $CACHE_TTL   = 300; // 5 minutes
@@ -354,7 +354,7 @@ $data  = $state['data'];
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AllStarLink Dashboard — PE1BZF</title>
+    <title>AllStarLink Dashboard — <?= htmlspecialchars($MY_CALL) ?></title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/vis-network@9.1.9/dist/vis-network.min.js"></script>
     <link href="https://unpkg.com/vis-network@9.1.9/dist/dist/vis-network.min.css" rel="stylesheet">
@@ -377,7 +377,7 @@ $data  = $state['data'];
     <div class="flex items-center justify-between mb-4">
         <div>
             <h1 class="text-2xl font-bold text-white">AllStarLink Dashboard</h1>
-            <p class="text-gray-400 text-xs mt-1">Node 449581 · PE1BZF · nxdn-almere.nl</p>
+            <p class="text-gray-400 text-xs mt-1">Node <?= htmlspecialchars($MY_NODE) ?> · <?= htmlspecialchars($MY_CALL) ?></p>
         </div>
         <div class="text-right">
             <div id="status-dot" class="inline-block w-3 h-3 rounded-full bg-green-400 pulse mr-1"></div>

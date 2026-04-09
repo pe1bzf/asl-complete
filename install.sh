@@ -228,10 +228,8 @@ install_service() {
 install_dashboard() {
     mkdir -p "$WEB_ROOT"
     sed \
-        -e "s|'449581'|'${NODE}'|g" \
-        -e "s|'PE1BZF'|'${CALLSIGN}'|g" \
-        -e "s|Node 449581 · PE1BZF|Node ${NODE} · ${CALLSIGN}|g" \
-        -e "s|nxdn-almere\.nl|$(hostname -f 2>/dev/null || hostname)|g" \
+        -e "s|'CHANGE_ME_NODE'|'${NODE}'|g" \
+        -e "s|'N0CALL'|'${CALLSIGN}'|g" \
         "$SCRIPT_DIR/dashboard/asl-activity.php" > "$WEB_ROOT/index.php"
 
     if id www-data &>/dev/null; then

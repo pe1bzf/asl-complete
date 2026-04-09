@@ -1,4 +1,4 @@
-# EchoLink installatie voor ASL3 node 449581
+# EchoLink installatie voor ASL3
 
 ## Probleem en oplossing
 
@@ -20,7 +20,7 @@ l<callsign><0xAC><0xAC><password>\rONLINE<version>(<hour>: <day>)\r<location>\r<
 
 ## EchoLink registratie vereist
 
-**Belangrijk:** de roepnaam PE1BZF-L moet geregistreerd zijn op de EchoLink
+**Belangrijk:** de roepnaam (bijv. N0CALL-L) moet geregistreerd zijn op de EchoLink
 website als **link station (-L)**. Ga naar https://www.echolink.org/ → My Account.
 
 Als de server "INVALID CALLSIGN" teruggeeft in de directory, betekent dat:
