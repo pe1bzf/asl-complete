@@ -185,12 +185,19 @@ if (isset($_GET['netmap'])) {
     $edges = [];
     $seen  = [];
 
+    // Eigen node coördinaten uit API
+    $myServer = $apiData['stats']['data']['server'] ?? [];
+    $myLat = (float)($myServer['Latitude'] ?? 0);
+    $myLon = (float)($myServer['Logitude'] ?? 0);
+
     // Central node
     $nodes[] = [
         'id'    => $MY_NODE,
         'label' => $MY_NODE . "\n" . $MY_CALL,
         'group' => 'self',
         'title' => 'Eigen hub node',
+        'lat'   => $myLat ?: null,
+        'lon'   => $myLon ?: null,
     ];
     $seen[$MY_NODE] = true;
 
@@ -214,11 +221,16 @@ if (isset($_GET['netmap'])) {
         if ($location) $title .= "\n$location";
         if ($freq && $freq !== 'Android') $title .= "\n$freq";
 
+        $lat = (float)($ln['server']['Latitude'] ?? 0);
+        $lon = (float)($ln['server']['Logitude'] ?? 0);
+
         $nodes[] = [
             'id'    => $id,
             'label' => $id . ($callsign ? "\n$callsign" : ''),
             'group' => $group,
             'title' => $title,
+            'lat'   => $lat ?: null,
+            'lon'   => $lon ?: null,
         ];
         $edges[] = ['from' => $id, 'to' => $MY_NODE, 'id' => "e_$id"];
         $seen[$id] = true;
@@ -346,10 +358,15 @@ $data  = $state['data'];
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/vis-network@9.1.9/dist/vis-network.min.js"></script>
     <link href="https://unpkg.com/vis-network@9.1.9/dist/dist/vis-network.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <style>
         .pulse { animation: pulse 1.5s infinite; }
         @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.5} }
         #network-map { height: 500px; background: #111827; border-radius: 0.5rem; }
+        #node-map { height: 400px; border-radius: 0.5rem; }
+        .leaflet-popup-content-wrapper { background: #1f2937; color: #f3f4f6; border: 1px solid #374151; }
+        .leaflet-popup-tip { background: #1f2937; }
     </style>
 </head>
 <body class="bg-gray-900 text-gray-100 min-h-screen font-mono text-sm">
@@ -408,6 +425,20 @@ $data  = $state['data'];
         </div>
         <div id="network-map" class="border border-gray-700 rounded-lg"></div>
         <p class="text-gray-600 text-xs mt-2 text-center">Klik op een node voor details · scrollen om in/uit te zoomen</p>
+    </div>
+
+    <!-- Kaart -->
+    <div class="bg-gray-800 rounded-xl p-4 border border-gray-700 mb-4">
+        <div class="flex items-center justify-between mb-3">
+            <h2 class="text-green-400 font-bold">Locatiekaart</h2>
+            <div class="flex gap-3 text-xs text-gray-400">
+                <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-full bg-cyan-400"></span>Eigen node</span>
+                <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-full bg-green-400"></span>Aan het uitzenden</span>
+                <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-full bg-blue-400"></span>Verbonden</span>
+                <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-full bg-gray-500"></span>Inactief/onbekend</span>
+            </div>
+        </div>
+        <div id="node-map" class="border border-gray-700"></div>
     </div>
 
     <!-- Recent activity -->
@@ -523,8 +554,11 @@ function applyData(data) {
 
     document.getElementById('status-dot').classList.replace('bg-red-400', 'bg-green-400');
 
-    // Update network map node colours
-    if (visNodes) updateNetworkStatus(data.tx_keys || [], data.link_keys || []);
+    // Update network map node colours + kaartmarkers
+    if (visNodes) {
+        updateNetworkStatus(data.tx_keys || [], data.link_keys || []);
+        updateMapStatus(data.tx_keys || [], data.link_keys || [], visNodes.get());
+    }
 }
 
 // ── Network map ───────────────────────────────────────────────────────────────
@@ -561,6 +595,7 @@ async function loadNetworkMap() {
         container.innerHTML = '';
         visNodes = new vis.DataSet(nodeItems);
         visEdges = new vis.DataSet(edgeItems);
+        initMap(data.nodes);
 
         visNet = new vis.Network(container, { nodes: visNodes, edges: visEdges }, {
             physics: {
@@ -594,6 +629,78 @@ function updateNetworkStatus(txKeys, linkKeys) {
         const group  = inTx ? 'tx' : (linked ? 'linked' : node.group);
         const props  = VIS_GROUPS[group] || VIS_GROUPS.known;
         visNodes.update({ id: node.id, color: props.color });
+    });
+}
+
+// ── Locatiekaart ──────────────────────────────────────────────────────────────
+let leafletMap = null;
+let mapMarkers = {};
+
+const MAP_COLORS = {
+    self:     '#06b6d4',
+    tx:       '#22c55e',
+    linked:   '#3b82f6',
+    known:    '#6b7280',
+    indirect: '#4b5563',
+    inactive: '#374151',
+};
+
+function makeMarkerIcon(color) {
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 36" width="24" height="36">
+        <path d="M12 0C5.4 0 0 5.4 0 12c0 9 12 24 12 24s12-15 12-24C24 5.4 18.6 0 12 0z"
+              fill="${color}" stroke="#fff" stroke-width="1.5"/>
+        <circle cx="12" cy="12" r="5" fill="#fff" fill-opacity="0.8"/>
+    </svg>`;
+    return L.divIcon({
+        html: svg,
+        className: '',
+        iconSize: [24, 36],
+        iconAnchor: [12, 36],
+        popupAnchor: [0, -36],
+    });
+}
+
+function initMap(nodes) {
+    const withCoords = nodes.filter(n => n.lat && n.lon);
+    if (!withCoords.length) return;
+
+    if (!leafletMap) {
+        leafletMap = L.map('node-map', { zoomControl: true });
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+            maxZoom: 18,
+        }).addTo(leafletMap);
+    }
+
+    // Verwijder oude markers
+    Object.values(mapMarkers).forEach(m => m.remove());
+    mapMarkers = {};
+
+    const bounds = [];
+    withCoords.forEach(n => {
+        const color = MAP_COLORS[n.group] || MAP_COLORS.known;
+        const marker = L.marker([n.lat, n.lon], { icon: makeMarkerIcon(color) })
+            .bindPopup(`<b>${escHtml(n.label.replace('\n', ' · '))}</b><br>${escHtml(n.title || '')}`)
+            .addTo(leafletMap);
+        mapMarkers[n.id] = marker;
+        bounds.push([n.lat, n.lon]);
+    });
+
+    if (bounds.length) leafletMap.fitBounds(bounds, { padding: [40, 40] });
+}
+
+function updateMapStatus(txKeys, linkKeys, nodes) {
+    if (!leafletMap) return;
+    const txSet   = new Set(txKeys.map(String));
+    const linkSet = new Set(linkKeys.map(String));
+    nodes.forEach(n => {
+        const marker = mapMarkers[n.id];
+        if (!marker) return;
+        const group = n.id === '<?= $MY_NODE ?>' ? 'self'
+            : txSet.has(String(n.id))   ? 'tx'
+            : linkSet.has(String(n.id)) ? 'linked'
+            : n.group;
+        marker.setIcon(makeMarkerIcon(MAP_COLORS[group] || MAP_COLORS.known));
     });
 }
 
