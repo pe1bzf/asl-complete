@@ -223,21 +223,29 @@ if (isset($_GET['netmap'])) {
         $edges[] = ['from' => $id, 'to' => $MY_NODE, 'id' => "e_$id"];
         $seen[$id] = true;
 
-        // Sub-nodes from topology
+        // Sub-nodes from topology — skip als hub meer dan 10 sub-nodes heeft
         $subNodes = $topo[$id] ?? [];
-        foreach ($subNodes as $sub) {
-            $sub = (string)$sub;
-            if ($sub === $id || isset($seen[$sub])) continue;
-            $inTxSub  = in_array($sub, $txKeys);
-            $subLabel = $resolveLabel($sub);
-            $nodes[] = [
-                'id'    => $sub,
-                'label' => $subLabel,
-                'group' => $inTxSub ? 'tx' : 'indirect',
-                'title' => "$subLabel (via $id)",
-            ];
-            $edges[] = ['from' => $sub, 'to' => $id, 'id' => "e_{$sub}_{$id}"];
-            $seen[$sub] = true;
+        $subCount = count($subNodes);
+        if ($subCount <= 10) {
+            foreach ($subNodes as $sub) {
+                $sub = (string)$sub;
+                if ($sub === $id || isset($seen[$sub])) continue;
+                $inTxSub  = in_array($sub, $txKeys);
+                $subLabel = $resolveLabel($sub);
+                $nodes[] = [
+                    'id'    => $sub,
+                    'label' => $subLabel,
+                    'group' => $inTxSub ? 'tx' : 'indirect',
+                    'title' => "$subLabel (via $id)",
+                ];
+                $edges[] = ['from' => $sub, 'to' => $id, 'id' => "e_{$sub}_{$id}"];
+                $seen[$sub] = true;
+            }
+        } else {
+            // Toon aantal verborgen sub-nodes op de bubbel
+            $last = count($nodes) - 1;
+            $nodes[$last]['label'] .= "\n{$subCount}+ nodes";
+            $nodes[$last]['title'] .= "\n{$subCount} indirect nodes (niet getoond)";
         }
     }
 
