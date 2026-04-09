@@ -635,6 +635,8 @@ function updateNetworkStatus(txKeys, linkKeys) {
 // ── Locatiekaart ──────────────────────────────────────────────────────────────
 let leafletMap = null;
 let mapMarkers = {};
+let mapFitted  = false;
+let lastMapNodes = [];
 
 const MAP_COLORS = {
     self:     '#06b6d4',
@@ -686,7 +688,11 @@ function initMap(nodes) {
         bounds.push([n.lat, n.lon]);
     });
 
-    if (bounds.length) leafletMap.fitBounds(bounds, { padding: [40, 40] });
+    if (bounds.length && !mapFitted) {
+        leafletMap.fitBounds(bounds, { padding: [40, 40] });
+        mapFitted = true;
+    }
+    lastMapNodes = nodes;
 }
 
 function updateMapStatus(txKeys, linkKeys, nodes) {
@@ -702,6 +708,15 @@ function updateMapStatus(txKeys, linkKeys, nodes) {
             : n.group;
         marker.setIcon(makeMarkerIcon(MAP_COLORS[group] || MAP_COLORS.known));
     });
+}
+
+async function refreshMap() {
+    try {
+        const res  = await fetch('?netmap=1');
+        const data = await res.json();
+        initMap(data.nodes);
+        updateMapStatus(data.tx_keys || [], data.link_keys || [], data.nodes);
+    } catch(_) {}
 }
 
 // ── SSE ───────────────────────────────────────────────────────────────────────
@@ -726,6 +741,7 @@ function startPolling() {
 
 startSSE();
 loadNetworkMap();
+setInterval(refreshMap, 60000);
 </script>
 </body>
 </html>
