@@ -8,6 +8,7 @@ LOGFILE     = '/var/log/asterisk/rpt-activity.log'
 TOPOFILE    = '/var/log/asterisk/asl-topology.json'
 CURTOPOFILE = '/var/log/asterisk/asl-current-topo.json'
 EL_DIRFILE  = '/var/log/asterisk/echolink-dir.json'
+EL_CACHEFILE = '/var/log/asterisk/echolink-cache.json'
 DEBOUNCE    = 2.0
 DB_REFRESH  = 15 * 60
 
@@ -19,6 +20,24 @@ db_lock = threading.Lock()
 echolink_db = {}
 el_db_lock  = threading.Lock()
 EL_REFRESH  = 5 * 60
+
+# --- Actieve EchoLink callsigns (via chan_echolink) ---
+echolink_active = set()
+el_active_lock  = threading.Lock()
+EL_ACTIVE_REFRESH = 30
+
+def load_echolink_cache():
+    """Laad persistente EchoLink node→callsign cache bij opstarten."""
+    try:
+        with open(EL_CACHEFILE) as f:
+            cached = json.load(f)
+        with el_db_lock:
+            echolink_db.update(cached)
+        log(f'[INFO] EchoLink cache geladen: {len(cached)} entries uit {EL_CACHEFILE}')
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        log(f'[WARN] EchoLink cache laden mislukt: {e}')
 
 def fetch_echolink_db():
     try:
@@ -41,8 +60,12 @@ def fetch_echolink_db():
                     if stripped != node:
                         db[stripped] = call
         with el_db_lock:
-            echolink_db.clear()
-            echolink_db.update(db)
+            echolink_db.update(db)   # merge: nieuwe entries toevoegen, bestaande behouden
+            try:
+                with open(EL_CACHEFILE, 'w') as f:
+                    json.dump(dict(echolink_db), f)
+            except Exception as e:
+                log(f'[WARN] echolink-cache.json schrijven mislukt: {e}')
         try:
             with open(EL_DIRFILE, 'w') as f:
                 json.dump(db, f)
@@ -80,6 +103,48 @@ def db_refresher():
         fetch_node_db()
         time.sleep(DB_REFRESH)
 
+def fetch_echolink_active():
+    """Haal actieve EchoLink callsigns op via een aparte AMI-verbinding."""
+    try:
+        s = socket.socket()
+        s.connect((HOST, PORT))
+        s.settimeout(5)
+        s.recv(1024)  # banner
+        s.sendall(b'Action: Login\r\nUsername: ' + USER.encode() +
+                  b'\r\nSecret: ' + PASSWD.encode() + b'\r\n\r\n')
+        s.recv(1024)  # login response
+        s.sendall(b'Action: Command\r\nCommand: echolink show nodes\r\n\r\n')
+        time.sleep(0.5)
+        buf = b''
+        for _ in range(5):
+            try:
+                buf += s.recv(4096)
+            except socket.timeout:
+                break
+        s.close()
+        text = buf.decode(errors='ignore')
+        calls = set()
+        for line in text.splitlines():
+            # formaat: "   12345 PD0ABC    1.2.3.4    Name"
+            parts = line.split()
+            if len(parts) >= 2 and parts[0].isdigit():
+                calls.add(parts[1])
+        with el_active_lock:
+            echolink_active.clear()
+            echolink_active.update(calls)
+    except Exception as e:
+        pass  # stille fout — echolink_active blijft ongewijzigd
+
+def el_active_refresher():
+    while True:
+        fetch_echolink_active()
+        time.sleep(EL_ACTIVE_REFRESH)
+
+def is_echolink_node(s):
+    """True als s een actieve EchoLink callsign is (via chan_echolink)."""
+    with el_active_lock:
+        return s in echolink_active
+
 def callsign(node):
     s = str(node)
     if s.isdigit() and len(s) == 7 and s.startswith('3'):
@@ -90,10 +155,16 @@ def callsign(node):
         if call:
             return f'EL:{call}'
         return f'EL:{el_stripped}'
+    if not s.isdigit():
+        return s  # roepnaam direct — geen EL-prefix hier
     with db_lock:
         return node_db.get(s, '?')
 
 def node_label(node):
+    s = str(node)
+    if not s.isdigit():
+        # Alleen EL:-prefix als het een actieve EchoLink verbinding is
+        return f'EL:{s}' if is_echolink_node(s) else s
     cs = callsign(node)
     return f'{node} ({cs})'
 
@@ -118,7 +189,9 @@ def parse_links_set(value):
     result = set()
     for part in parts[1:]:
         node = part[1:] if part.startswith('T') else part
-        if node:
+        # Alleen numerieke node-ID's — roepnamen (bijv. PD2HAB, PA2JM) zijn
+        # directe verbindingen en worden nooit als sub-node opgeslagen
+        if node and node.isdigit():
             result.add(node)
     return result
 
@@ -134,10 +207,7 @@ def real_subs(subs):
     return {n for n in subs if not is_permanent(n)}
 
 def sub_label(subs):
-    return ', '.join(
-        f'{n} ({callsign(n)})' if callsign(n) != '?' else n
-        for n in sorted(subs)
-    )
+    return ', '.join(node_label(n) for n in sorted(subs))
 
 # --- Persistente topology ---
 # node_history: direct_node -> list(sub_nodes)  — opgeslagen als JSON
@@ -148,7 +218,9 @@ def load_topology():
     try:
         with open(TOPOFILE) as f:
             raw = json.load(f)
-        node_history = {k: set(v) for k, v in raw.items()}
+        # Filter self-references uit opgeslagen topologie
+        node_history = {k: set(v) - {k} for k, v in raw.items()}
+        node_history = {k: v for k, v in node_history.items() if v}  # lege sets weggooien
         log(f'[INFO] topology geladen: {len(node_history)} nodes uit {TOPOFILE}')
     except FileNotFoundError:
         pass
@@ -249,8 +321,11 @@ def ami_query_rpt_variables(s, node=MY_NODE):
     return alinks, links_set
 
 # --- Start database thread ---
-threading.Thread(target=db_refresher, daemon=True).start()
-threading.Thread(target=el_refresher,  daemon=True).start()
+load_echolink_cache()    # persistente cache laden vóór eerste refresh
+threading.Thread(target=db_refresher,        daemon=True).start()
+threading.Thread(target=el_refresher,        daemon=True).start()
+threading.Thread(target=el_active_refresher, daemon=True).start()
+fetch_echolink_active()  # direct ophalen bij start
 load_topology()
 
 # --- Hoofdlus ---
@@ -277,6 +352,7 @@ while True:
             direct_set     = set(init_alinks.keys())
             indirect_set   = init_links - direct_set
             build_initial_parent_map(direct_set, indirect_set)
+            save_current_topo()
             known = sum(1 for v in parent_map.values() if real_subs(v))
             log(f'[INFO] initiële staat: {len(direct_set)} directe nodes, '
                 f'{len(indirect_set)} indirect, {known} met bekende sub-nodes')
@@ -342,7 +418,7 @@ while True:
                     removed_direct = set(prev_alinks.keys()) - direct_set
                     for rd in removed_direct:
                         if new_links_set is not None:
-                            gone = (prev_links_set - new_links_set) - direct_set
+                            gone = (prev_links_set - new_links_set) - direct_set - {rd}
                             if gone:
                                 node_history[rd] = node_history.get(rd, set()) | gone
                                 save_topology()
@@ -361,7 +437,7 @@ while True:
                             for other in list(parent_map.keys()):
                                 if other != nd:
                                     parent_map[other] -= new_subs
-                        subs = set(node_history.get(nd, set())) | new_subs
+                        subs = (set(node_history.get(nd, set())) | new_subs) - {nd}
                         if subs:
                             parent_map[nd] = subs
                         log(f'[LINK]    node={node_label(nd)} verbonden')
