@@ -205,6 +205,17 @@ if (isset($_GET['netmap'])) {
 
     // Direct linked nodes from ASL API
     $linkedNodes = $apiData['stats']['data']['linkedNodes'] ?? [];
+
+    // Pre-bouw set van directe API-node-ID's: deze nodes worden altijd als directe
+    // verbinding getoond met GPS-coördinaten, ook al staan ze in de topologie als
+    // sub-node van een andere hub (bijv. PA2TSL staat in topo als sub-node van PA2JM,
+    // maar IS rechtstreeks verbonden met 449581).
+    $apiNodeSet = [];
+    foreach ($linkedNodes as $ln) {
+        $nid = (string)($ln['name'] ?? '');
+        if ($nid !== '') $apiNodeSet[$nid] = true;
+    }
+
     foreach ($linkedNodes as $ln) {
         $id       = (string)($ln['name'] ?? '');
         if ($id === '' || isset($seen[$id])) continue;
@@ -245,6 +256,9 @@ if (isset($_GET['netmap'])) {
 
         // Sub-nodes from topology — skip als hub meer dan 10 sub-nodes heeft
         $subNodes = $topo[$id] ?? [];
+        // Verwijder sub-nodes die ook directe API-nodes zijn: die worden al
+        // direct aan de hub getoond met correcte GPS-coördinaten.
+        $subNodes = array_filter($subNodes, fn($s) => !isset($apiNodeSet[(string)$s]));
         $subCount = count($subNodes);
         if ($subCount <= 10) {
             foreach ($subNodes as $sub) {
