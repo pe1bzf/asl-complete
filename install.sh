@@ -135,15 +135,21 @@ whiptail --title "$TITLE" --msgbox "$L_WELCOME" $H $W
 
 # ── Configuratie verzamelen ───────────────────────────────────────────────────
 collect_config() {
-    NODE=$(whiptail --title "$TITLE" \
-        --inputbox "$L_NODE_PROMPT" 8 $W "" \
-        3>&1 1>&2 2>&3) || exit 1
-    [ -z "$NODE" ] && { whiptail --msgbox "$L_NODE_ERR" 7 $W; collect_config; return; }
+    while true; do
+        NODE=$(whiptail --title "$TITLE" \
+            --inputbox "$L_NODE_PROMPT" 8 $W "" \
+            3>&1 1>&2 2>&3) || exit 1
+        [ -n "$NODE" ] && break
+        whiptail --msgbox "$L_NODE_ERR" 7 $W
+    done
 
-    CALLSIGN=$(whiptail --title "$TITLE" \
-        --inputbox "$L_CALL_PROMPT" 8 $W "" \
-        3>&1 1>&2 2>&3) || exit 1
-    [ -z "$CALLSIGN" ] && { whiptail --msgbox "$L_CALL_ERR" 7 $W; collect_config; return; }
+    while true; do
+        CALLSIGN=$(whiptail --title "$TITLE" \
+            --inputbox "$L_CALL_PROMPT" 8 $W "" \
+            3>&1 1>&2 2>&3) || exit 1
+        [ -n "$CALLSIGN" ] && break
+        whiptail --msgbox "$L_CALL_ERR" 7 $W
+    done
 
     AMI_HOST=$(whiptail --title "$TITLE" \
         --inputbox "$L_AMI_HOST_PROMPT" 8 $W "127.0.0.1" \
@@ -157,10 +163,13 @@ collect_config() {
         --inputbox "$L_AMI_USER_PROMPT" 8 $W "admin" \
         3>&1 1>&2 2>&3) || exit 1
 
-    AMI_SECRET=$(whiptail --title "$TITLE" \
-        --passwordbox "$L_AMI_PASS_PROMPT" 8 $W \
-        3>&1 1>&2 2>&3) || exit 1
-    [ -z "$AMI_SECRET" ] && { whiptail --msgbox "$L_AMI_PASS_ERR" 7 $W; collect_config; return; }
+    while true; do
+        AMI_SECRET=$(whiptail --title "$TITLE" \
+            --passwordbox "$L_AMI_PASS_PROMPT" 8 $W \
+            3>&1 1>&2 2>&3) || exit 1
+        [ -n "$AMI_SECRET" ] && break
+        whiptail --msgbox "$L_AMI_PASS_ERR" 7 $W
+    done
 
     WEB_ROOT=$(whiptail --title "$TITLE" \
         --inputbox "$L_WEB_ROOT_PROMPT" 8 $W "/var/www/html/asl" \
@@ -235,6 +244,18 @@ install_dashboard() {
     if id www-data &>/dev/null; then
         chown -R www-data:www-data "$WEB_ROOT"
     fi
+
+    # Zorg dat logrotate het logbestand aanmaakt met world-readable rechten,
+    # anders kan www-data/PHP het bestand niet lezen na elke nachtelijke rotatie.
+    if [ -f /etc/logrotate.d/asterisk ]; then
+        sed -i 's/create 640 asterisk asterisk/create 644 asterisk asterisk/' \
+            /etc/logrotate.d/asterisk
+    fi
+
+    # Fix rechten van het huidige logbestand als het al bestaat
+    if [ -f /var/log/asterisk/rpt-activity.log ]; then
+        chmod o+r /var/log/asterisk/rpt-activity.log
+    fi
 }
 
 # ── 4. iax.conf aanpassen ────────────────────────────────────────────────────
@@ -246,7 +267,8 @@ fix_iax() {
 
     for section in iaxrpt iaxclient; do
         if grep -q "^\[$section\]" "$CONF"; then
-            if ! awk "/^\[$section\]/{found=1} found && /^qualify/{exit 0} END{exit !found}" "$CONF"; then
+            # Voeg qualify toe als het nog niet in deze sectie staat
+            if ! awk "/^\[$section\]/{s=1} s && /^\[/ && !/^\[$section\]/{s=0} s && /^qualify/{found=1; exit} END{exit !found}" "$CONF"; then
                 sed -i "/^\[$section\]/a qualify = yes\nqualifyfreq = 25" "$CONF"
             fi
         fi
@@ -261,8 +283,10 @@ fix_rpt() {
     [ -f "$CONF" ] || return
 
     cp "$CONF" "${CONF}.bak-$(date +%Y%m%d%H%M%S)"
-    if grep -q "^totime" "$CONF"; then
-        sed -i "s/^totime\s*=.*/totime = ${TOTIME_MS}/" "$CONF"
+    # Controleer of totime al in de node-sectie staat (niet ergens anders in het bestand)
+    if awk "/^\[${NODE}\]/{s=1} s && /^\[/ && !/^\[${NODE}\]/{s=0} s && /^totime/{found=1; exit} END{exit !found}" "$CONF"; then
+        # Vervang alleen binnen de node-sectie
+        awk "/^\[${NODE}\]/{s=1} s && /^\[/ && !/^\[${NODE}\]/{s=0} s && /^totime/{sub(/^totime\s*=.*/, \"totime = ${TOTIME_MS}\")} {print}" "$CONF" > "${CONF}.tmp" && mv "${CONF}.tmp" "$CONF"
     else
         sed -i "/^\[${NODE}\]/a totime = ${TOTIME_MS}" "$CONF"
     fi
@@ -273,8 +297,12 @@ fix_rpt() {
 run_steps
 
 # ── Eindresultaat ─────────────────────────────────────────────────────────────
-sleep 2
-LOGGER_STATUS=$(systemctl is-active asl-activity-logger 2>/dev/null || echo "$L_UNKNOWN")
+# Wacht tot de logger actief is (max 10 seconden)
+for i in $(seq 1 10); do
+    LOGGER_STATUS=$(systemctl is-active asl-activity-logger 2>/dev/null || echo "$L_UNKNOWN")
+    [ "$LOGGER_STATUS" = "active" ] && break
+    sleep 1
+done
 LOG_LINES=$(wc -l < /var/log/asterisk/rpt-activity.log 2>/dev/null || echo "0")
 IP=$(hostname -I | awk '{print $1}')
 WEB_PATH="${WEB_ROOT#/var/www/html}"
