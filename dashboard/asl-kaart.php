@@ -178,7 +178,12 @@ if (isset($_GET['netmap'])) {
     $nodes = [];
     $seen  = [];
 
-    $myServer = $apiData['stats']['data']['server'] ?? [];
+    // ASL API levert eigen-node-coördinaten onder stats.user_node.server
+    // (identiek onder node.server); stats.data.server bestaat daar niet.
+    $myServer = $apiData['stats']['user_node']['server']
+             ?? $apiData['node']['server']
+             ?? $apiData['stats']['data']['server']
+             ?? [];
     $myLat = (float)($myServer['Latitude'] ?? 0);
     $myLon = (float)($myServer['Logitude'] ?? 0);
 
@@ -323,7 +328,11 @@ $data  = $state['data'];
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ASL Kaart — <?= htmlspecialchars($MY_CALL) ?></title>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Lokaal gehoste, vooraf gepurgde Tailwind-build. NIET vervangen door de
+         play-CDN (cdn.tailwindcss.com): die compileert in de browser via een Web
+         Worker en gaf intermittent layout-glitches op WebKit (iPhone Safari/Chrome).
+         Bij nieuwe Tailwind-klassen opnieuw builden, zie README. -->
+    <link rel="stylesheet" href="/asl/tailwind.min.css">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <style>
